@@ -1,0 +1,1 @@
+python -m md_lj.main

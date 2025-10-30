@@ -2,12 +2,18 @@
 #include "particle_system.h"
 #include <cmath>
 
-
-// Functor for Ideal Gas (No Interaction)
-// The acceleration is always zero.
 template <typename T>
 struct IdealGas {
-    __device__ Vec2<T> calculate_acceleration(const Particle<T>& p) const {
+    // IdealGas requires no parameters, so the default constructor is fine.
+
+    __device__ Vec2<T> calculate_acceleration(
+        const Particle<T>& my_particle,
+        int my_particle_id,
+        const Particle<T>* system_particles,
+        int system_size
+    ) const {
+        // By definition, in an ideal gas, there are no forces between
+        // particles. The acceleration is therefore always zero.
         return {0.0, 0.0};
     }
 };
@@ -17,60 +23,49 @@ struct IdealGas {
 // Functor for Lennard-Jones Interaction
 template <typename T>
 struct LennardJones {
-    const T epsilon; // Depth of the potential well
-    const T sigma; // Distance where potential is zero
-    const T cutoff_sq; // To avoid calculating forces for distant particles
-    // The calculation function now takes the particle we are focused on,
-    // its ID, the array of all particles in its system, and the system size.
+    const T epsilon;
+    const T sigma;
+    const T r_cut_sq;
+    const T smoothing_sq; // Use softening for better stability
 
-    // What kind of magic is that
-    __device__ LennardJones(T e, T s, T c_sq) : epsilon(e), sigma(s), cutoff_sq(c_sq) {}
-
+    __device__ LennardJones(T e, T s, T rc, T smoothing_factor) : epsilon(e), sigma(s), r_cut_sq(rc * rc), smoothing_sq(smoothing_factor * smoothing_factor) {}
 
     __device__ Vec2<T> calculate_acceleration(
         const Particle<T>& my_particle,
         int my_particle_id,
-        const Particle<T>* system_particles, // Pointer to the array of particles (in shared memory)
-        int system_size
-    )  const {
-        Vec2<T> total_acceleration = {0.0, 0.0};
+        const Particle<T>* system_particles,
+        int system_size) const
+    {
+        Vec2<T> total_acc = {0.0, 0.0};
+        const T sigma6 = pow(sigma, 6);
+        const T sigma12 = sigma6 * sigma6;
 
-        // Loop over every other particle in THIS system
         for (int j = 0; j < system_size; ++j) {
-            if (my_particle_id == j) {
-                continue; // Don't interact with self
-            }
+            if (j == my_particle_id) continue;
 
-            // Calculate distance vector
-            Vec2<T> r_ij = {system_particles[j].position.x - my_particle.position.x,
-                            system_particles[j].position.y - my_particle.position.y};
-            
+            Vec2<T> r_ij = {
+                system_particles[j].position.x - my_particle.position.x,
+                system_particles[j].position.y - my_particle.position.y
+            };
+
             T r_sq = r_ij.x * r_ij.x + r_ij.y * r_ij.y;
+            if (r_sq >= r_cut_sq) continue;
 
-            // Optional: Use a cutoff to improve performance <= we consider every particles here, added for future use
-            // if (r_sq > cutoff_sq) {
-            //     continue;
-            // }
+            // Use smooth softening instead of a hard clamp
+            r_sq += smoothing_sq;
 
-            // square root smoothing to avoid singularities
-            r_sq += 1.0e-6;
+            T inv_r2 = 1.0f / r_sq;
+            T inv_r6 = inv_r2 * inv_r2 * inv_r2;
+            T inv_r12 = inv_r6 * inv_r6;
 
-            T sigma_sq = sigma * sigma;
-            T r2_inv = sigma_sq / r_sq;
-            T r6_inv = r2_inv * r2_inv * r2_inv;
-            T r12_inv = r6_inv * r6_inv;
-            
-            // Lennard-Jones force formula (simplified for F/m = a)
-            T force_magnitude = 24.0 * epsilon / r_sq * (2.0 * r12_inv - r6_inv);
+            // Corrected, efficient formula for the scalar multiplier (F/r)
+            T scalar = 24.0f * epsilon * inv_r2 * ( (2.0f * sigma12 * inv_r12) - (sigma6 * inv_r6) );
 
-            total_acceleration.x += r_ij.x * force_magnitude;
-            total_acceleration.y += r_ij.y * force_magnitude;
+            total_acc.x += scalar * r_ij.x;
+            total_acc.y += scalar * r_ij.y;
         }
-
-        return total_acceleration;
-        // return {1000.0f, 1000.0f}; // ideal gas debug
+        return total_acc;
     }
-
 };
 
 
@@ -164,5 +159,78 @@ struct Gravity {
         }
 
         return total_acceleration;
+    }
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ==========================================================
+//     Purely Repulsive 1/x2 Interaction
+// ==========================================================
+template <typename T>
+struct RepulsiveForce {
+    const T epsilon; // Strength of the repulsion
+    const T sigma;   // The "diameter" of the particle
+
+    __device__ RepulsiveForce(T e, T s) : epsilon(e), sigma(s) {}
+
+    __device__ Vec2<T> calculate_acceleration(
+        const Particle<T>& my_particle,
+        int my_particle_id,
+        const Particle<T>* system_particles,
+        int system_size) const
+    {
+        Vec2<T> total_acc = {0.0, 0.0};
+        const T sigma2 = sigma * sigma;
+        const T sigma6 = sigma2 * sigma2 * sigma2;
+        const T sigma12 = sigma6 * sigma6; // We need sigma^12 for the formula
+
+        for (int j = 0; j < system_size; ++j) {
+            if (j == my_particle_id) continue;
+
+            Vec2<T> r_ij = {
+                system_particles[j].position.x - my_particle.position.x,
+                system_particles[j].position.y - my_particle.position.y
+            };
+
+            T r_sq = r_ij.x * r_ij.x + r_ij.y * r_ij.y;
+
+            // The ONLY condition: If particles are not overlapping, there is NO force.
+            if (r_sq >= sigma2) continue;
+            
+            // Avoid singularity if they are perfectly overlapped
+            if (r_sq < 1e-6) r_sq = 1e-6;
+
+            T scalar = 1.0f / r_sq;
+ 
+
+            // // Cap the maximum acceleration to avoid numerical instability
+            // const T max_acc_scalar = 1.0e10; // A large but non-infinite number
+            // if (scalar > max_acc_scalar) {
+            //     scalar = max_acc_scalar;
+            // }
+
+            total_acc.x -= scalar * r_ij.x;
+            total_acc.y -= scalar * r_ij.y;
+        }
+        return total_acc;
     }
 };

@@ -5,73 +5,6 @@
 #include "boundaries.h"
 
 
-
-// ===========================================================
-//            Basic 1 System Kernel with Internal Loop
-// ===========================================================
-
-// CUDA kernel with an internal loop, avoid starting overhead each step
-template <typename T>
-__global__ void simulation_n_steps_kernel(Particle<T>* particles, int num_particles, 
-                                          Vec2<T> box_min, Vec2<T> box_max, T dt, 
-                                          int steps_to_run) { // New parameter
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-    int num_of_systems = 24;
-    // int system_size = num_particles / num_of_systems;
-
-    if (idx >= num_particles) {
-        return;
-    }
-
-    // Load particle data from global memory just once at the beginning
-    Particle<T> p = particles[idx];
-
-    // THE MAIN LOOP IS NOW INSIDE THE KERNEL
-    for (int i = 0; i < steps_to_run; ++i) {
-        // --- Interaction Force Calculation ---
-        IdealGas<T> interaction;
-        Vec2<T> acceleration = interaction.calculate_acceleration(p);
-
-        // --- Integration ---
-        euler_integrator(p, acceleration, dt);
-
-        // --- Boundary Conditions ---
-        apply_mirror_boundaries(p, box_min, box_max);
-    }
-
-    // Write the final particle data back to global memory just once at the end
-    particles[idx] = p;
-}
-
-// Host-callable function that launches the kernel
-template <typename T>
-void run_n_simulation_steps(Particle<T>* d_particles, int num_particles, 
-                            Vec2<T> box_min, Vec2<T> box_max, T dt, 
-                            int steps_to_run, cudaStream_t stream) {
-
-    int threads_per_block = 256; // Hardcoded, cores/SM * 2 => seems to be ok since we're aiming for 4-6k particles
-    int blocks_per_grid = 24; // 24 because we run 24 different systems, one per SM. Old 1system computation :  (num_particles + threads_per_block - 1) / threads_per_block;
-
-    simulation_n_steps_kernel<<<blocks_per_grid, threads_per_block, 0, stream>>>(
-        d_particles, num_particles, box_min, box_max, dt, steps_to_run
-    );
-}
-
-// Explicit template instantiation for float. This is required because this function
-// is defined in a .cu file and called from a .cpp file.
-template void run_n_simulation_steps<float>(Particle<float>*, int, Vec2<float>, Vec2<float>, float, int, cudaStream_t);
-
-
-
-
-
-
-
-
-
-
-
 // ===========================================================
 //       New Kernel for Multiple Systems with LJ Interaction    
 // ===========================================================
@@ -101,8 +34,10 @@ __global__ void multi_system_lj_kernel(
     __syncthreads();
 
     // --- 3. Main Simulation Loop ---
-    // LennardJones<T> interaction(0.1f, 0.05f, 9.0f);
-    Gravity<T> interaction(1.0f, 0.01f);
+    // LennardJones<T> interaction(1.0f, 0.1f, 2.5f, 0.01f);
+    // Gravity<T> interaction(1.0f, 0.01f);
+    // IdealGas<T> interaction;
+    RepulsiveForce<T> interaction(1.0f, 0.1f);
 
     for (int step = 0; step < steps_to_run; ++step) {
         // --- A. Process Particles (Grid-Stride Loop) ---

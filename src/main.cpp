@@ -20,7 +20,7 @@ int main() {
     // const int num_particles = 200000;
     const float dt = 1.0e-5f;
     const int total_steps = 100000;
-    const int steps_between_recordings = 100;
+    const int steps_between_recordings = 1000;
     const int num_recordings = total_steps / steps_between_recordings;
     const Vec2<float> box_min = {-1.0f, -1.0f};
     const Vec2<float> box_max = {1.0f, 1.0f};
@@ -28,7 +28,7 @@ int main() {
 
     // LJ tests
     const int num_systems = 24;
-    const int particles_per_system = 1500; // MAX 1536 on 4060, pad to 1500 to leave some room
+    const int particles_per_system = 500; // MAX 1536 on 4060, pad to 1500 to leave some room
 
     const int num_particles = num_systems * particles_per_system; // This is now a calculated value // New: Number of independent systems
 
@@ -41,7 +41,7 @@ int main() {
     // --- Host Data Initialization ---
     std::vector<Particle<float>> h_particles(num_particles);
     std::mt19937 rng(1234);
-    std::uniform_real_distribution<float> pos_dist(-1.0f, 1.0f);
+    std::uniform_real_distribution<float> pos_dist(-0.5f, 0.5f);
     std::uniform_real_distribution<float> vel_dist(-0.5f, 0.5f);
 
     for (int i = 0; i < num_particles; ++i) {
@@ -77,9 +77,9 @@ int main() {
 
             int previous_step = i * steps_between_recordings;
             std::cout << "Processing data from step " << previous_step << std::endl;
-            std::cout << "  - Particle 0 position: (" 
-                      << h_pinned_buffers[previous_buffer_idx][0].position.x << ", " 
-                      << h_pinned_buffers[previous_buffer_idx][0].position.y << ")" << std::endl;
+            // std::cout << "  - Particle 0 position: (" 
+            //           << h_pinned_buffers[previous_buffer_idx][0].position.x << ", " 
+            //           << h_pinned_buffers[previous_buffer_idx][0].position.y << ")" << std::endl;
             
             // ==========================================================
             // UNFORMATTED SNAPSHOT SAVE

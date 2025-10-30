@@ -18,9 +18,9 @@ int main() {
 
     // --- Simulation Parameters ---
     // const int num_particles = 200000;
-    const float dt = 0.001f;
-    const int total_steps = 500;
-    const int steps_between_recordings = 10;
+    const float dt = 1.0e-5f;
+    const int total_steps = 100000;
+    const int steps_between_recordings = 100;
     const int num_recordings = total_steps / steps_between_recordings;
     const Vec2<float> box_min = {-1.0f, -1.0f};
     const Vec2<float> box_max = {1.0f, 1.0f};

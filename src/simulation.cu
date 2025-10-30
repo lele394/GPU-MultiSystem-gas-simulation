@@ -101,7 +101,8 @@ __global__ void multi_system_lj_kernel(
     __syncthreads();
 
     // --- 3. Main Simulation Loop ---
-    LennardJones<T> interaction(0.1f, 0.1f, 9.0f);
+    // LennardJones<T> interaction(0.1f, 0.05f, 9.0f);
+    Gravity<T> interaction(1.0f, 0.01f);
 
     for (int step = 0; step < steps_to_run; ++step) {
         // --- A. Process Particles (Grid-Stride Loop) ---

@@ -11,5 +11,5 @@ We don't care about system ordering in the big matrix at initialization since th
 OKKKKKKKKK SOOOOOO
 I can do ping ponging directly into L1 cache (great but) I need to be careful to the number of particles per systems
 => dependent on cache size
-    => RTX4060 => 1536 particles, pad to 1500 to leave some room around
+    => RTX4060 => 1536 particles, pad to 1500 to leave some room around, we dealing with 128kb here
 

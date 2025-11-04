@@ -19,7 +19,7 @@ int main() {
     // --- Simulation Parameters ---
     // const int num_particles = 200000;
     const float dt = 1.0e-3f;
-    const int total_steps = 100;
+    const int total_steps = 1000;
     const int steps_between_recordings = 10;
     const int num_recordings = total_steps / steps_between_recordings;
     const Vec2<float> box_min = {-1.0f, -1.0f};
@@ -28,19 +28,22 @@ int main() {
 
     // MS tests
     const int num_systems = 24;
-    const int particles_per_system = 1024;  // MAX 2048 for Leapfrog, due to __shared__ I believe. Kernel not started (?)    
+    const int particles_per_system = 2048;  // MAX 2048 for Leapfrog, due to __shared__ I believe. Kernel not started (?)    
                                             // MAX 1024 for Euler due to double buffering (Most likely since 50% of LF)
 
     const int num_particles = num_systems * particles_per_system; // This is now a calculated value // New: Number of independent systems
 
     const size_t total_particles_size = num_particles * sizeof(Particle<float>);
 
-    const IntegratorType integrator_type = IntegratorType::Euler;
+    const IntegratorType integrator_type = IntegratorType::Leapfrog;
     const InteractionType interaction_type = InteractionType::RepulsiveForce;
 
     // --- CUDA Stream Setup ---
-    cudaStream_t stream;
-    CUDA_CHECK(cudaStreamCreate(&stream));
+    cudaStream_t compute_stream;
+    CUDA_CHECK(cudaStreamCreate(&compute_stream));
+
+    cudaStream_t transfer_stream;
+    CUDA_CHECK(cudaStreamCreate(&transfer_stream));
 
     // --- Host Data Initialization ---
     std::vector<Particle<float>> h_particles(num_particles);
@@ -75,7 +78,7 @@ int main() {
         num_systems,
         particles_per_system,
         interaction_type, 
-        stream
+        compute_stream
     );
 
 
@@ -90,7 +93,7 @@ int main() {
         // --- 1. PROCESS DATA FROM PREVIOUS ITERATION (if it exists) ---
         if (i > 0) {
             // Wait for the PREVIOUS transfer to finish before we use its data
-            CUDA_CHECK(cudaStreamSynchronize(stream)); 
+            CUDA_CHECK(cudaStreamSynchronize(compute_stream)); 
 
             int previous_step = i * steps_between_recordings;
             std::cout << "Processing data from step " << previous_step << std::endl;
@@ -137,20 +140,26 @@ int main() {
             integrator_type,      
             interaction_type,      
             box_min, box_max, dt,
-            steps_between_recordings, stream
+            steps_between_recordings, compute_stream
         );
 
         // B. Clone data on GPU for transfer
-        // Note on stream : Since we use the same stream, 
-        CUDA_CHECK(cudaMemcpyAsync(d_particles_record, d_particles_sim, particles_size, cudaMemcpyDeviceToDevice, stream));
+        // Note on stream : First copy the data to a staging area on the GPU using the compute stream then launch D-H transfer on transfer stream
+        CUDA_CHECK(cudaMemcpyAsync(d_particles_record, d_particles_sim, particles_size, cudaMemcpyDeviceToDevice, compute_stream));
+        
+        // Gemini says to refactor this and use events because StreamSnchronize is a hard block 
+        // Can apparently hook into cuda events and avoid that. Would it corrupt data tho? 
+        CUDA_CHECK(cudaStreamSynchronize(compute_stream)); // Finish D-D copy
+        CUDA_CHECK(cudaStreamSynchronize(transfer_stream)); // Ensure previous D-H is done before starting a new one
+
 
         // C. Start async transfer into the CURRENT buffer
-        CUDA_CHECK(cudaMemcpyAsync(h_pinned_buffers[current_buffer_idx], d_particles_record, particles_size, cudaMemcpyDeviceToHost, stream));
+        CUDA_CHECK(cudaMemcpyAsync(h_pinned_buffers[current_buffer_idx], d_particles_record, particles_size, cudaMemcpyDeviceToHost, transfer_stream));
     }
 
     // --- FINAL SYNCHRONIZATION AND PROCESSING ---
     // We need to wait for the very last transfer to finish and process its data
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    CUDA_CHECK(cudaStreamSynchronize(compute_stream));
     int final_step = num_recordings * steps_between_recordings;
     std::cout << "Processing data from final step " << final_step << std::endl;
     std::cout << "  - Particle 0 position: (" 
@@ -163,7 +172,8 @@ int main() {
     CUDA_CHECK(cudaFree(d_particles_record));
     CUDA_CHECK(cudaFreeHost(h_pinned_buffers[0]));
     CUDA_CHECK(cudaFreeHost(h_pinned_buffers[1]));
-    CUDA_CHECK(cudaStreamDestroy(stream));
+    CUDA_CHECK(cudaStreamDestroy(compute_stream));
+    CUDA_CHECK(cudaStreamDestroy(transfer_stream));
 
     std::cout << "\nSimulation finished successfully." << std::endl;
     return 0;

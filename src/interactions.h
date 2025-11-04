@@ -6,6 +6,9 @@ template <typename T>
 struct IdealGas {
     // IdealGas requires no parameters, so the default constructor is fine.
 
+    __host__ __device__ IdealGas() {}
+
+
     __device__ Vec2<T> calculate_acceleration(
         const Particle<T>& my_particle,
         int my_particle_id,
@@ -17,84 +20,6 @@ struct IdealGas {
         return {0.0, 0.0};
     }
 };
-
-
-
-// Functor for Lennard-Jones Interaction
-template <typename T>
-struct LennardJones {
-    const T epsilon;
-    const T sigma;
-    const T r_cut_sq;
-    const T smoothing_sq; // Use softening for better stability
-
-    __device__ LennardJones(T e, T s, T rc, T smoothing_factor) : epsilon(e), sigma(s), r_cut_sq(rc * rc), smoothing_sq(smoothing_factor * smoothing_factor) {}
-
-    __device__ Vec2<T> calculate_acceleration(
-        const Particle<T>& my_particle,
-        int my_particle_id,
-        const Particle<T>* system_particles,
-        int system_size) const
-    {
-        Vec2<T> total_acc = {0.0, 0.0};
-        const T sigma6 = pow(sigma, 6);
-        const T sigma12 = sigma6 * sigma6;
-
-        for (int j = 0; j < system_size; ++j) {
-            if (j == my_particle_id) continue;
-
-            Vec2<T> r_ij = {
-                system_particles[j].position.x - my_particle.position.x,
-                system_particles[j].position.y - my_particle.position.y
-            };
-
-            T r_sq = r_ij.x * r_ij.x + r_ij.y * r_ij.y;
-            if (r_sq >= r_cut_sq) continue;
-
-            // Use smooth softening instead of a hard clamp
-            r_sq += smoothing_sq;
-
-            T inv_r2 = 1.0f / r_sq;
-            T inv_r6 = inv_r2 * inv_r2 * inv_r2;
-            T inv_r12 = inv_r6 * inv_r6;
-
-            // Corrected, efficient formula for the scalar multiplier (F/r)
-            T scalar = 24.0f * epsilon * inv_r2 * ( (2.0f * sigma12 * inv_r12) - (sigma6 * inv_r6) );
-
-            total_acc.x += scalar * r_ij.x;
-            total_acc.y += scalar * r_ij.y;
-        }
-        return total_acc;
-    }
-};
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -114,8 +39,9 @@ struct Gravity {
     const T G; // Gravitational constant
     const T smoothing_factor_sq; // To prevent division by zero at r=0
 
-    __device__ Gravity(T g_constant, T smoothing) 
+    __host__ __device__ Gravity(T g_constant, T smoothing) 
         : G(g_constant), smoothing_factor_sq(smoothing * smoothing) {}
+    __device__ Gravity() : G(1.0f), smoothing_factor_sq(0.01f*0.01f) {}
 
     __device__ Vec2<T> calculate_acceleration(
         const Particle<T>& my_particle,
@@ -190,7 +116,7 @@ struct RepulsiveForce {
     const T epsilon; // Strength of the repulsion
     const T sigma;   // The "diameter" of the particle
 
-    __device__ RepulsiveForce(T e, T s) : epsilon(e), sigma(s) {}
+    __host__ __device__ RepulsiveForce(T e, T s) : epsilon(e), sigma(s) {}
 
     __device__ Vec2<T> calculate_acceleration(
         const Particle<T>& my_particle,

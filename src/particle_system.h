@@ -11,4 +11,5 @@ template <typename T>
 struct Particle {
     Vec2<T> position;
     Vec2<T> velocity;
+    Vec2<T> acceleration; // Soo this is bad, memory footprint +33%
 };

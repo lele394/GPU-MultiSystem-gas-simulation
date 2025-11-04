@@ -18,21 +18,25 @@ int main() {
 
     // --- Simulation Parameters ---
     // const int num_particles = 200000;
-    const float dt = 1.0e-5f;
-    const int total_steps = 100000;
-    const int steps_between_recordings = 1000;
+    const float dt = 1.0e-3f;
+    const int total_steps = 100;
+    const int steps_between_recordings = 10;
     const int num_recordings = total_steps / steps_between_recordings;
     const Vec2<float> box_min = {-1.0f, -1.0f};
     const Vec2<float> box_max = {1.0f, 1.0f};
 
 
-    // LJ tests
+    // MS tests
     const int num_systems = 24;
-    const int particles_per_system = 500; // MAX 1536 on 4060, pad to 1500 to leave some room
+    const int particles_per_system = 1024;  // MAX 2048 for Leapfrog, due to __shared__ I believe. Kernel not started (?)    
+                                            // MAX 1024 for Euler due to double buffering (Most likely since 50% of LF)
 
     const int num_particles = num_systems * particles_per_system; // This is now a calculated value // New: Number of independent systems
 
     const size_t total_particles_size = num_particles * sizeof(Particle<float>);
+
+    const IntegratorType integrator_type = IntegratorType::Euler;
+    const InteractionType interaction_type = InteractionType::RepulsiveForce;
 
     // --- CUDA Stream Setup ---
     cudaStream_t stream;
@@ -41,7 +45,7 @@ int main() {
     // --- Host Data Initialization ---
     std::vector<Particle<float>> h_particles(num_particles);
     std::mt19937 rng(1234);
-    std::uniform_real_distribution<float> pos_dist(-0.5f, 0.5f);
+    std::uniform_real_distribution<float> pos_dist(-1.0f, 1.0f);
     std::uniform_real_distribution<float> vel_dist(-0.5f, 0.5f);
 
     for (int i = 0; i < num_particles; ++i) {
@@ -64,6 +68,19 @@ int main() {
 
     // --- Initial Copy to GPU ---
     CUDA_CHECK(cudaMemcpy(d_particles_sim, h_particles.data(), particles_size, cudaMemcpyHostToDevice));
+
+    // --- Initial Force Calculation for Leapfrog Integrator ---
+    run_initial_force_calculation<float>(
+        d_particles_sim,
+        num_systems,
+        particles_per_system,
+        interaction_type, 
+        stream
+    );
+
+
+
+
 
     // --- Main Simulation Loop (Achieving Overlap) ---
     for (int i = 0; i < num_recordings; ++i) {
@@ -114,16 +131,17 @@ int main() {
         // A. Run N steps of simulation
         // run_n_simulation_steps(d_particles_sim, num_particles, box_min, box_max, dt, 
         //                        steps_between_recordings, stream);
-        run_lj_simulation_steps(
+        run_simulation_steps<float>(
             d_particles_sim,
-            num_particles,
-            num_systems,          // Pass the correct number of systems
-            particles_per_system, // Pass the correct number of particles per system
+            num_particles, num_systems, particles_per_system,
+            integrator_type,      
+            interaction_type,      
             box_min, box_max, dt,
             steps_between_recordings, stream
         );
 
         // B. Clone data on GPU for transfer
+        // Note on stream : Since we use the same stream, 
         CUDA_CHECK(cudaMemcpyAsync(d_particles_record, d_particles_sim, particles_size, cudaMemcpyDeviceToDevice, stream));
 
         // C. Start async transfer into the CURRENT buffer

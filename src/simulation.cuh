@@ -5,9 +5,9 @@
 #include <cstdlib>
 
 #include "particle_system.h"
-#include "simulation_defs.h" // <-- Make sure this is included!
+#include "simulation_defs.h"
 
-// A simple macro to check for CUDA errors from any file
+// A simple macro to check for CUDA errors from any file (Thanks Gemini for this one)
 #define CUDA_CHECK(err) { \
     cudaError_t err_code = err; \
     if (err_code != cudaSuccess) { \
@@ -17,7 +17,11 @@
     } \
 }
 
+// Below templated calls for simulation steps
+// That's actually pretty cool
+
 // Declaration for the one-off initial force calculation
+// I'm gonna need to change that too when adding mixed precision
 template <typename T>
 void run_initial_force_calculation(
     Particle<T>* d_particles, 

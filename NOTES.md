@@ -14,3 +14,5 @@ I can do ping ponging directly into L1 cache (great but) I need to be careful to
     => RTX4060 => 1536 particles, pad to 1500 to leave some room around, we dealing with 128kb here
 
 Be carefull about the space needed by the integrator and the interaction computation
+
+# THIS ISNT UP TO DATE

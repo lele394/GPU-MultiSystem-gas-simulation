@@ -1,13 +1,13 @@
 #pragma once
 #include "particle_system.h"
-#include "interactions.h" // Because I'm putting interactions inside integrators now
+#include "interactions.h" // Needed for InteractionModel
 
 // ==========================================================
 //                 Euler Integrator (Single-Step)
 // ==========================================================
+// Does the whole job
 template <typename T>
 struct EulerIntegrator {
-    // This single function does the whole job: calculate force, then update.
     template <typename InteractionModel>
     __device__ void integrate(
         Particle<T>& p,
@@ -17,6 +17,11 @@ struct EulerIntegrator {
         const InteractionModel& interaction,
         T dt) const 
     {
+
+        // I need to refactor this, the acceleration array already exists in the particle
+        //  ^ No you don't, you basically dropped that feature
+
+
         // Boom, interactions in the integrator
         Vec2<T> acceleration = interaction.calculate_acceleration(p, p_idx, read_buffer, system_size);
 
@@ -46,6 +51,10 @@ struct LeapfrogIntegrator {
     // FROG
     // Part 2: Update velocities using NEW acceleration a(t+dt)
     __device__ void post_force_update(Particle<T>& p, const Vec2<T>& new_acceleration, T dt) const {
+
+        // Can I get rid of new_acceleration and just use p.acceleration?
+        //  ^ No, because p.acceleration is still a(t), we need a(t+dt) here
+
         p.velocity.x += 0.5f * new_acceleration.x * dt;
         p.velocity.y += 0.5f * new_acceleration.y * dt;
         p.acceleration = new_acceleration; // Store for next iteration

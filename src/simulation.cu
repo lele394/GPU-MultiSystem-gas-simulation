@@ -6,30 +6,59 @@
 #include "boundaries.h"
 #include "simulation_defs.h" // fancy umbrellas
 
+
+
+// I hate that file
+//  I hate that file so much
+//   Look at those kernel launches
+//    It's art 
+//     Beautiful but horrible art
+
+
+
+// I have a smart launcher now
+// So I can hide all that code away here
+
+// Split kernels for Leapfrog and other integrators
+// Because Leapfrog needs that initial force calculation
+//  and has that weird two-part update
+
+// I have no idea if this is efficient or not
+// But it works and is way cleaner than before
+// And supposedly should be easier to add RK4(5) later on
+//   ^ this might be a lie
+
+
+
 // =========================================================================
 //                             KER NEL S
 // =========================================================================
 
 // --- KERNEL 1: For Calculating Initial Forces [Required for Leapfrog] ---
+// That's leapfrog precomputed initial acceleration
 template <typename T, typename InteractionModel>
 __global__ void initial_force_kernel(
     Particle<T>* all_particles_global,
     int particles_per_system,
     InteractionModel interaction) 
 {
+
+    // Identify system and thread
     const int system_id = blockIdx.x;
     const int thread_id = threadIdx.x;
     const int num_threads = blockDim.x;
 
-    extern __shared__ Particle<T> system_particles_shared[];
+    extern __shared__ Particle<T> system_particles_shared[]; // Shared memory for all particles in the system
+                                                             // Secret sauce for L1 caching?
 
     // Cooperatively load all particles
+    // This should do L1 caching too hopefully (Please I beg)
     for (int p_idx = thread_id; p_idx < particles_per_system; p_idx += num_threads) {
         system_particles_shared[p_idx] = all_particles_global[system_id * particles_per_system + p_idx];
     }
     __syncthreads();
 
-    // Each thread calculates the initial force for its assigned particles
+    // calculates the initial force for its assigned particles
     for (int p_idx = thread_id; p_idx < particles_per_system; p_idx += num_threads) {
         Particle<T> p = system_particles_shared[p_idx];
         Vec2<T> initial_accel = interaction.calculate_acceleration(p, p_idx, system_particles_shared, particles_per_system);
@@ -38,6 +67,9 @@ __global__ void initial_force_kernel(
 }
 
 // --- KERNEL 2: For ALL Single-Step Integrators (e.g., Euler) ---
+// Concerns : integrator recreation every nstep
+// There's so much destruction and creation going on here it's insane
+//  Might be an issue? (definitly)
 template <typename T, typename IntegratorModel, typename InteractionModel>
 __global__ void single_step_simulation_kernel(
     Particle<T>* all_particles_global,
@@ -46,29 +78,34 @@ __global__ void single_step_simulation_kernel(
     int steps_to_run,
     InteractionModel interaction)
 {
+
+    // Cuda stuff like before
     const int system_id = blockIdx.x;
     const int thread_id = threadIdx.x;
     const int num_threads = blockDim.x;
 
+    // buffers
     extern __shared__ Particle<T> shared_mem[];
     Particle<T>* read_buffer = &shared_mem[0];
     Particle<T>* write_buffer = &shared_mem[particles_per_system];
 
+    // L1 cache magic again 
     for (int p_idx = thread_id; p_idx < particles_per_system; p_idx += num_threads) {
         read_buffer[p_idx] = all_particles_global[system_id * particles_per_system + p_idx];
     }
     __syncthreads();
 
-    IntegratorModel integrator;   // Instantiate the chosen integrator
+    IntegratorModel integrator;   // Instantiate the integrator (again)
 
+    // steps
     for (int step = 0; step < steps_to_run; ++step) {
         for (int p_idx = thread_id; p_idx < particles_per_system; p_idx += num_threads) {
             Particle<T> p = read_buffer[p_idx];
             
-            // This single line now encapsulates all the logic!
+            // integrator magic
             integrator.integrate(p, p_idx, read_buffer, particles_per_system, interaction, dt);
             
-            apply_mirror_boundaries(p, box_min, box_max);
+            apply_mirror_boundaries(p, box_min, box_max); // bouncy stuff
             write_buffer[p_idx] = p;
         }
         __syncthreads();
@@ -130,19 +167,23 @@ __global__ void leapfrog_simulation_kernel(
 
 
 // =========================================================================
-//            The Single "Smart" Launcher & Initial Force Launcher
+//            The "Smart" Launcher & Initial Force Launcher 
 // =========================================================================
+// I wanna refactor with switch case later probably
+
 
 // Launcher for the one-off initial force calculation
+// Needed for Leapfrog integrator
 template <typename T>
 void run_initial_force_calculation(
     Particle<T>* d_particles, int num_systems, int particles_per_system, InteractionType interaction_type, cudaStream_t stream)
-{
+{   // Should I pass the interaction model directly? avoids the switch case, case avoids destroying it later
     const int threads_per_block = 256;
     dim3 blocks_per_grid(num_systems);
     dim3 threads_per_block_dim(threads_per_block);
     size_t shared_mem_size = particles_per_system * sizeof(Particle<T>);
 
+    // Interaction switch. ACTUALLY a switch case would be cleaner here
     if (interaction_type == InteractionType::Gravity) {
         Gravity<T> interaction(1.0f, 0.05f); 
         initial_force_kernel<T, Gravity<T>>
@@ -155,7 +196,8 @@ void run_initial_force_calculation(
             <<<blocks_per_grid, threads_per_block_dim, shared_mem_size, stream>>>
             (d_particles, particles_per_system, interaction);
     }
-    // Add other interactions like LennardJones if you want to use them with Leapfrog
+    // Add other interactions like LennardJones here if new ones are impleemented
+    // Note : I have hard coded defaults here. Might not be good.
 }
 
 // The main "Smart" Launcher
@@ -165,15 +207,32 @@ void run_simulation_steps(
     IntegratorType integrator_type,
     InteractionType interaction_type,
     Vec2<T> box_min, Vec2<T> box_max, T dt, int steps_to_run, cudaStream_t stream)
-{
+{   // Pass interaction model directly? Avoid destroying and recreating it every time.
+    // I don't like it but it works for now
+    // Perfs improvement possible later
+
+    // Not sure I can pass the integrator directly, however might be possible to 
+    // bundle the call in the integrator struct itself? Needs thought
+    // I really don't like that if-else/switch-case mess though
+    // Too heavy to read
+
+    // Need to check cuz the integrator kernel depends on the interaction type
+    // I smell perfs issues here too
+
+    // I really wanna nuke that switch case to oblivion later
+    // unneeded added complexity
+
+
     const int threads_per_block = 256;
     dim3 blocks_per_grid(num_systems);
     dim3 threads_per_block_dim(threads_per_block);
 
     // --- Path for Euler and other single-step integrators ---
+    // USE SWITCH CASE???? ANYONE??????
     if (integrator_type == IntegratorType::Euler) {
         size_t shared_mem_size = 2 * particles_per_system * sizeof(Particle<T>);
         
+        // SWITCH HERE TOO PLEASE
         if (interaction_type == InteractionType::Gravity) {
             Gravity<T> interaction(1.0f, 0.05f);
             single_step_simulation_kernel<T, EulerIntegrator<T>, Gravity<T>>
@@ -207,5 +266,6 @@ void run_simulation_steps(
 // =========================================================================
 //                   Explicit Template Instantiations
 // =========================================================================
+// This is bad, I'm gonna have to change that when adding mixed precision
 template void run_initial_force_calculation<float>(Particle<float>*, int, int, InteractionType, cudaStream_t);
 template void run_simulation_steps<float>(Particle<float>*, int, int, int, IntegratorType, InteractionType, Vec2<float>, Vec2<float>, float, int, cudaStream_t);

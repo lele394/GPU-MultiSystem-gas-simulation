@@ -12,18 +12,23 @@
 
 int main() {
 
+    // ---- LOGGING STUFF ----
     // Create data directory since I nuke it every compile/run
     std::filesystem::create_directory("dat");
 
 
     // --- Simulation Parameters ---
-    // const int num_particles = 200000;
-    const float dt = 1.0e-3f;
-    const int total_steps = 1000;
+    // - Physics - 
+    const float dt = 1.0e-5f;
+    // const InteractionType interaction_type = InteractionType::RepulsiveForce;
+    const InteractionType interaction_type = InteractionType::Gravity;
+    const Vec2<float> box_max = {1.0f, 1.0f}; // Simulation Box size
+    const Vec2<float> box_min = {-1.0f, -1.0f}; // Simulation Box size
+
+    // - Simulation Control -
+    const int total_steps = 10000;
     const int steps_between_recordings = 10;
     const int num_recordings = total_steps / steps_between_recordings;
-    const Vec2<float> box_min = {-1.0f, -1.0f};
-    const Vec2<float> box_max = {1.0f, 1.0f};
 
 
     // MS tests
@@ -36,7 +41,6 @@ int main() {
     const size_t total_particles_size = num_particles * sizeof(Particle<float>);
 
     const IntegratorType integrator_type = IntegratorType::Leapfrog;
-    const InteractionType interaction_type = InteractionType::RepulsiveForce;
 
     // --- CUDA Stream Setup ---
     cudaStream_t compute_stream;
@@ -47,32 +51,44 @@ int main() {
 
     // --- Host Data Initialization ---
     std::vector<Particle<float>> h_particles(num_particles);
+
+    // - RNG and distributions - 
     std::mt19937 rng(1234);
-    std::uniform_real_distribution<float> pos_dist(-1.0f, 1.0f);
+    // Pos
+    // std::uniform_real_distribution<float> pos_dist(-1.0f, 1.0f);
+    std::uniform_real_distribution<float> pos_dist(-0.5f, 0.5f);
+    // Dist
     std::uniform_real_distribution<float> vel_dist(-0.5f, 0.5f);
 
+    // Actual array initialization
     for (int i = 0; i < num_particles; ++i) {
         h_particles[i].position = {pos_dist(rng), pos_dist(rng)};
         h_particles[i].velocity = {vel_dist(rng), vel_dist(rng)};
     }
 
     // --- Device Memory Allocation ---
-    size_t particles_size = num_particles * sizeof(Particle<float>);
-    Particle<float>* d_particles_sim = nullptr;
-    Particle<float>* d_particles_record = nullptr;
+    // Ping pong won't work since a copy is needed. D-D copy
+    size_t particles_size = num_particles * sizeof(Particle<float>); // Dynamic scaling
+    Particle<float>* d_particles_sim = nullptr;     // pointer to device simulation buffer
+    Particle<float>* d_particles_record = nullptr;  // pointer to device recording buffer
     CUDA_CHECK(cudaMalloc(&d_particles_sim, particles_size));
     CUDA_CHECK(cudaMalloc(&d_particles_record, particles_size));
 
     // --- DOUBLE BUFFER: Host Memory for Receiving Data (PINNED) ---
-    // We create two buffers to ping-pong between.
+    // Create two buffers to ping-pong between.
+    // Ping pong so we can have D-H transfer overlap with treatment (disk write).
+    // Is it really useful here? Maybe for larger systems / longer writes.
+    // Anyway, good to have I guess
     Particle<float>* h_pinned_buffers[2];
-    CUDA_CHECK(cudaMallocHost(&h_pinned_buffers[0], particles_size));
+    CUDA_CHECK(cudaMallocHost(&h_pinned_buffers[0], particles_size)); // cudaMallocHost makes it pinned memory
     CUDA_CHECK(cudaMallocHost(&h_pinned_buffers[1], particles_size));
 
     // --- Initial Copy to GPU ---
     CUDA_CHECK(cudaMemcpy(d_particles_sim, h_particles.data(), particles_size, cudaMemcpyHostToDevice));
 
     // --- Initial Force Calculation for Leapfrog Integrator ---
+    // Since leapfrog is our standard, I didn't add a check for Euler here
+    // Euler do be going nuts with "high" dt tho
     run_initial_force_calculation<float>(
         d_particles_sim,
         num_systems,
@@ -90,9 +106,9 @@ int main() {
         int current_buffer_idx = i % 2;
         int previous_buffer_idx = (i + 1) % 2;
 
-        // --- 1. PROCESS DATA FROM PREVIOUS ITERATION (if it exists) ---
+        // --- PROCESS DATA FROM PREVIOUS ITERATION (if it exists) ---
         if (i > 0) {
-            // Wait for the PREVIOUS transfer to finish before we use its data
+            // Wait for the PREVIOUS transfer to finish before writing
             CUDA_CHECK(cudaStreamSynchronize(compute_stream)); 
 
             int previous_step = i * steps_between_recordings;
@@ -103,8 +119,11 @@ int main() {
             
             // ==========================================================
             // UNFORMATTED SNAPSHOT SAVE
+            // Dumping it raw, because that's how python likes it ;)
             // ==========================================================
             
+            // Gemini was there^tm
+
             // 1. Create the filename
             std::stringstream ss;
             ss << "dat/" << previous_step << "_step.bin";
@@ -128,12 +147,8 @@ int main() {
 
         }
 
-        // --- 2. QUEUE UP ALL GPU WORK FOR THE CURRENT ITERATION ---
-        // This part is non-blocking. The CPU will fire these commands off and continue.
-        
-        // A. Run N steps of simulation
-        // run_n_simulation_steps(d_particles_sim, num_particles, box_min, box_max, dt, 
-        //                        steps_between_recordings, stream);
+        // Run N steps of simulation
+        // That should be non blocking cuz NVIDIA STREAMS BABY
         run_simulation_steps<float>(
             d_particles_sim,
             num_particles, num_systems, particles_per_system,
@@ -143,31 +158,34 @@ int main() {
             steps_between_recordings, compute_stream
         );
 
-        // B. Clone data on GPU for transfer
+        // --- ASYNC DATA TRANSFER SETUP ---
         // Note on stream : First copy the data to a staging area on the GPU using the compute stream then launch D-H transfer on transfer stream
         CUDA_CHECK(cudaMemcpyAsync(d_particles_record, d_particles_sim, particles_size, cudaMemcpyDeviceToDevice, compute_stream));
         
         // Gemini says to refactor this and use events because StreamSnchronize is a hard block 
         // Can apparently hook into cuda events and avoid that. Would it corrupt data tho? 
+        // I dunno. Needs testing.
+        // For now, this works ¯\_(ツ)_/¯ (I copy pasted that shrug)
         CUDA_CHECK(cudaStreamSynchronize(compute_stream)); // Finish D-D copy
-        CUDA_CHECK(cudaStreamSynchronize(transfer_stream)); // Ensure previous D-H is done before starting a new one
+        CUDA_CHECK(cudaStreamSynchronize(transfer_stream)); // Ensure previous D-H is done before starting a new one, don't make data go badonkers
 
 
-        // C. Start async transfer into the CURRENT buffer
+        // Start async transfer into the CURRENT buffer (cf ping pong)
         CUDA_CHECK(cudaMemcpyAsync(h_pinned_buffers[current_buffer_idx], d_particles_record, particles_size, cudaMemcpyDeviceToHost, transfer_stream));
     }
 
     // --- FINAL SYNCHRONIZATION AND PROCESSING ---
-    // We need to wait for the very last transfer to finish and process its data
+    // Same as above, but for the last batch
     CUDA_CHECK(cudaStreamSynchronize(compute_stream));
     int final_step = num_recordings * steps_between_recordings;
     std::cout << "Processing data from final step " << final_step << std::endl;
-    std::cout << "  - Particle 0 position: (" 
-              << h_pinned_buffers[(num_recordings - 1) % 2][0].position.x << ", " 
-              << h_pinned_buffers[(num_recordings - 1) % 2][0].position.y << ")" << std::endl;
+    // std::cout << "  - Particle 0 position: (" 
+    //           << h_pinned_buffers[(num_recordings - 1) % 2][0].position.x << ", " 
+    //           << h_pinned_buffers[(num_recordings - 1) % 2][0].position.y << ")" << std::endl;
 
 
     // --- Cleanup ---
+    // Driver passing the mop on the absolute mess we made of memory
     CUDA_CHECK(cudaFree(d_particles_sim));
     CUDA_CHECK(cudaFree(d_particles_record));
     CUDA_CHECK(cudaFreeHost(h_pinned_buffers[0]));
@@ -176,5 +194,5 @@ int main() {
     CUDA_CHECK(cudaStreamDestroy(transfer_stream));
 
     std::cout << "\nSimulation finished successfully." << std::endl;
-    return 0;
+    return 0; // Graceful exit in style *sparklesss*
 }

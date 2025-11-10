@@ -1,2 +1,6 @@
 build/*
 .vscode/*
+
+# slides shouldn't be saved, why the fuck does my slidev install breaks istg
+# ^ I fixed it I think, use nvm 20 for some reason (wth)
+# slides/*

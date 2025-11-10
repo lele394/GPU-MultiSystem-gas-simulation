@@ -20,13 +20,13 @@ int main() {
     // --- Simulation Parameters ---
     // - Physics - 
     const float dt = 1.0e-5f;
-    // const InteractionType interaction_type = InteractionType::RepulsiveForce;
-    const InteractionType interaction_type = InteractionType::Gravity;
+    const InteractionType interaction_type = InteractionType::RepulsiveForce;
+    // const InteractionType interaction_type = InteractionType::Gravity;
     const Vec2<float> box_max = {1.0f, 1.0f}; // Simulation Box size
     const Vec2<float> box_min = {-1.0f, -1.0f}; // Simulation Box size
 
     // - Simulation Control -
-    const int total_steps = 10000;
+    const int total_steps = 1000;
     const int steps_between_recordings = 10;
     const int num_recordings = total_steps / steps_between_recordings;
 
@@ -108,6 +108,14 @@ int main() {
 
         // --- PROCESS DATA FROM PREVIOUS ITERATION (if it exists) ---
         if (i > 0) {
+
+
+            // BOTTLENECK ALERT
+            // This is a blocking call, meaning the compute stream has to wait here
+            // Basically defeats the purpose of streams
+            // Need to offload saving to another thread
+            //   ^ will I do that now? nope, too late
+
             // Wait for the PREVIOUS transfer to finish before writing
             CUDA_CHECK(cudaStreamSynchronize(compute_stream)); 
 

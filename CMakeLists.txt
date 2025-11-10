@@ -4,6 +4,9 @@ cmake_minimum_required(VERSION 3.18)
 # Project Name and Language (C++ and CUDA)
 project(GasSimulation LANGUAGES CXX CUDA)
 
+# Enable CUDA debugging flags (fancy cuz cflow don't know sh*t about cuda)
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -G -lineinfo")
+
 # Create the executable by listing its source files with their paths
 add_executable(gas_simulation
     src/main.cpp

@@ -6,6 +6,7 @@
 #include "boundaries.h"
 #include "simulation_defs.h" // fancy umbrellas
 
+#include "settings.h"
 
 
 // I hate that file
@@ -14,6 +15,7 @@
 //    It's art 
 //     Beautiful but horrible art
 
+// Shouldv've named this hell.cu
 
 
 // I have a smart launcher now
@@ -178,7 +180,7 @@ template <typename T>
 void run_initial_force_calculation(
     Particle<T>* d_particles, int num_systems, int particles_per_system, InteractionType interaction_type, cudaStream_t stream)
 {   // Should I pass the interaction model directly? avoids the switch case, case avoids destroying it later
-    const int threads_per_block = 256;
+    // const int threads_per_block = 256;
     dim3 blocks_per_grid(num_systems);
     dim3 threads_per_block_dim(threads_per_block);
     size_t shared_mem_size = particles_per_system * sizeof(Particle<T>);
@@ -210,56 +212,151 @@ void run_simulation_steps(
 {   // Pass interaction model directly? Avoid destroying and recreating it every time.
     // I don't like it but it works for now
     // Perfs improvement possible later
+    // Also enables creation of the interaction in main, can change currently hardcoded params
 
     // Not sure I can pass the integrator directly, however might be possible to 
     // bundle the call in the integrator struct itself? Needs thought
-    // I really don't like that if-else/switch-case mess though
-    // Too heavy to read
+    // ~~I really don't like that if-else/switch-case mess though~~
+    // ~~Too heavy to read~~
+    // I did the switch case
 
     // Need to check cuz the integrator kernel depends on the interaction type
     // I smell perfs issues here too
 
     // I really wanna nuke that switch case to oblivion later
     // unneeded added complexity
+    // Yeah but how tho
 
 
-    const int threads_per_block = 256;
+    // const int threads_per_block = 256;
     dim3 blocks_per_grid(num_systems);
     dim3 threads_per_block_dim(threads_per_block);
 
     // --- Path for Euler and other single-step integrators ---
     // USE SWITCH CASE???? ANYONE??????
-    if (integrator_type == IntegratorType::Euler) {
-        size_t shared_mem_size = 2 * particles_per_system * sizeof(Particle<T>);
-        
-        // SWITCH HERE TOO PLEASE
-        if (interaction_type == InteractionType::Gravity) {
-            Gravity<T> interaction(1.0f, 0.05f);
-            single_step_simulation_kernel<T, EulerIntegrator<T>, Gravity<T>>
-                <<<blocks_per_grid, threads_per_block_dim, shared_mem_size, stream>>>
-                (d_particles, particles_per_system, box_min, box_max, dt, steps_to_run, interaction);
-        } else if (interaction_type == InteractionType::RepulsiveForce) {
-            RepulsiveForce<T> interaction(1.0f, 0.1f);
-            single_step_simulation_kernel<T, EulerIntegrator<T>, RepulsiveForce<T>>
-                <<<blocks_per_grid, threads_per_block_dim, shared_mem_size, stream>>>
-                (d_particles, particles_per_system, box_min, box_max, dt, steps_to_run, interaction);
-        }
 
-    // --- Path for the Leapfrog integrator ---
-    } else if (integrator_type == IntegratorType::Leapfrog) {
-        size_t shared_mem_size = particles_per_system * sizeof(Particle<T>);
-        
-        if (interaction_type == InteractionType::Gravity) {
-            Gravity<T> interaction(1.0f, 0.05f);
-            leapfrog_simulation_kernel<T, Gravity<T>>
-                <<<blocks_per_grid, threads_per_block_dim, shared_mem_size, stream>>>
-                (d_particles, particles_per_system, box_min, box_max, dt, steps_to_run, interaction);
-        } else if (interaction_type == InteractionType::RepulsiveForce) {
-            RepulsiveForce<T> interaction(1.0f, 0.1f);
-            leapfrog_simulation_kernel<T, RepulsiveForce<T>>
-                <<<blocks_per_grid, threads_per_block_dim, shared_mem_size, stream>>>
-                (d_particles, particles_per_system, box_min, box_max, dt, steps_to_run, interaction);
-        }
+    // --- 2. Calculate Required Shared Memory and Challenge Sizes ---
+    int max_shmem_bytes;
+    cudaDeviceGetAttribute(&max_shmem_bytes, cudaDevAttrMaxSharedMemoryPerBlockOptin, 0);
+
+    size_t requested_shmem_size = 0;
+    int max_particles_for_integrator = 0;
+    const size_t particle_size = sizeof(Particle<T>);
+
+    // Determine requested memory and max possible particles based on integrator choice
+    switch (integrator_type) {
+        case IntegratorType::Euler:
+            requested_shmem_size = 2 * particles_per_system * particle_size;
+            max_particles_for_integrator = max_shmem_bytes / (2 * particle_size);
+            break;
+        case IntegratorType::Leapfrog:
+            requested_shmem_size = particles_per_system * particle_size;
+            max_particles_for_integrator = max_shmem_bytes / particle_size;
+            break;
+        default:
+            printf("FATAL ERROR: Unknown IntegratorType specified in launcher.\n");
+            return;
+    }
+
+    // With quick if toogle, technical printout for debugging
+    // I'll keep it like that, if you're here that means you're digging into kernel launch
+    
+    if(KernelLogsEnabled)
+    {
+        printf("\n=== KERNEL LOGS ===\n");
+        printf("\n--- SHARED MEMORY CONFIGURATION ---\n");
+        printf("Max available shared memory per SM : %d bytes (%.1f KB)\n", max_shmem_bytes, (float)max_shmem_bytes / 1024.0f);
+        printf("Size of one Particle               : %zu bytes\n", particle_size);
+        printf("Integrator selected                : %s\n", (integrator_type == IntegratorType::Leapfrog ? "Leapfrog" : "Euler"));
+        printf(" -> Max possible particles/system   : %d\n", max_particles_for_integrator);
+        printf(" -> Current particles/system        : %d\n", particles_per_system);
+        printf(" -> Requested shared memory         : %zu bytes\n", requested_shmem_size);
+        printf("-----------------------------------\n\n");
+
+    }
+
+    if (requested_shmem_size > max_shmem_bytes) {
+        printf("FATAL ERROR: Request EXCEEDS device limit.\n");
+        printf("-> Reduce particles_per_system to %d or less for this integrator.\n", max_particles_for_integrator);
+        return;
+    }
+
+    // --- 3. Dispatch, with switches (finally) ---
+    switch (integrator_type) {
+
+        // ============================
+        case IntegratorType::Euler:
+            switch (interaction_type) {
+
+
+                case InteractionType::Gravity: {
+                    cudaFuncSetAttribute(single_step_simulation_kernel<T, EulerIntegrator<T>, Gravity<T>>,
+                                         cudaFuncAttributeMaxDynamicSharedMemorySize, max_shmem_bytes);
+                    Gravity<T> interaction(G, gravity_smoothing);
+                    single_step_simulation_kernel<T, EulerIntegrator<T>, Gravity<T>>
+                        <<<blocks_per_grid, threads_per_block_dim, requested_shmem_size, stream>>>
+                        (d_particles, particles_per_system, box_min, box_max, dt, steps_to_run, interaction);
+                    break;
+                }
+                
+                
+                
+                case InteractionType::RepulsiveForce: {
+                    cudaFuncSetAttribute(single_step_simulation_kernel<T, EulerIntegrator<T>, RepulsiveForce<T>>,
+                                         cudaFuncAttributeMaxDynamicSharedMemorySize, max_shmem_bytes);
+                    RepulsiveForce<T> interaction(epsilon, sigma);
+                    single_step_simulation_kernel<T, EulerIntegrator<T>, RepulsiveForce<T>>
+                        <<<blocks_per_grid, threads_per_block_dim, requested_shmem_size, stream>>>
+                        (d_particles, particles_per_system, box_min, box_max, dt, steps_to_run, interaction);
+                    break;
+                }
+                
+                
+                
+                // Add other like IdealGas here...
+                default:
+                    printf("FATAL ERROR: Unknown InteractionType for Euler integrator.\n");
+                    break;
+            }
+            break; // End of Euler case
+
+
+
+
+        // ============================
+        case IntegratorType::Leapfrog:
+            switch (interaction_type) {
+
+
+
+                case InteractionType::Gravity: {
+                    cudaFuncSetAttribute(leapfrog_simulation_kernel<T, Gravity<T>>,
+                                         cudaFuncAttributeMaxDynamicSharedMemorySize, max_shmem_bytes);
+                    Gravity<T> interaction(G, gravity_smoothing);
+                    leapfrog_simulation_kernel<T, Gravity<T>>
+                        <<<blocks_per_grid, threads_per_block_dim, requested_shmem_size, stream>>>
+                        (d_particles, particles_per_system, box_min, box_max, dt, steps_to_run, interaction);
+                    break;
+                }
+
+
+
+
+                case InteractionType::RepulsiveForce: {
+                    cudaFuncSetAttribute(leapfrog_simulation_kernel<T, RepulsiveForce<T>>,
+                                         cudaFuncAttributeMaxDynamicSharedMemorySize, max_shmem_bytes);
+                    RepulsiveForce<T> interaction(epsilon, sigma);
+                    leapfrog_simulation_kernel<T, RepulsiveForce<T>>
+                        <<<blocks_per_grid, threads_per_block_dim, requested_shmem_size, stream>>>
+                        (d_particles, particles_per_system, box_min, box_max, dt, steps_to_run, interaction);
+                    break;
+                }
+                // Add other like IdealGas here...
+                default:
+                    printf("FATAL ERROR: Unknown InteractionType for Leapfrog integrator.\n");
+                    break;
+            }
+            break; // End of Leapfrog case
     }
 }
 

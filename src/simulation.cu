@@ -178,11 +178,11 @@ __global__ void leapfrog_simulation_kernel(
 // Needed for Leapfrog integrator
 template <typename T>
 void run_initial_force_calculation(
-    Particle<T>* d_particles, int num_systems, int particles_per_system, InteractionType interaction_type, cudaStream_t stream)
+    Particle<T>* d_particles, int num_systems, int particles_per_system, InteractionType interaction_type, cudaStream_t stream, Settings settings)
 {   // Should I pass the interaction model directly? avoids the switch case, case avoids destroying it later
     // const int threads_per_block = 256;
     dim3 blocks_per_grid(num_systems);
-    dim3 threads_per_block_dim(threads_per_block);
+    dim3 threads_per_block_dim(settings.threads_per_block);
     size_t shared_mem_size = particles_per_system * sizeof(Particle<T>);
 
     // Interaction switch. ACTUALLY a switch case would be cleaner here
@@ -208,7 +208,7 @@ void run_simulation_steps(
     Particle<T>* d_particles, int total_particles, int num_systems, int particles_per_system,
     IntegratorType integrator_type,
     InteractionType interaction_type,
-    Vec2<T> box_min, Vec2<T> box_max, T dt, int steps_to_run, cudaStream_t stream)
+    Vec2<T> box_min, Vec2<T> box_max, T dt, int steps_to_run, cudaStream_t stream, Settings settings)
 {   // Pass interaction model directly? Avoid destroying and recreating it every time.
     // I don't like it but it works for now
     // Perfs improvement possible later
@@ -230,7 +230,7 @@ void run_simulation_steps(
 
     // const int threads_per_block = 256;
     dim3 blocks_per_grid(num_systems);
-    dim3 threads_per_block_dim(threads_per_block);
+    dim3 threads_per_block_dim(settings.threads_per_block);
 
     // --- Path for Euler and other single-step integrators ---
     // USE SWITCH CASE???? ANYONE??????
@@ -261,7 +261,7 @@ void run_simulation_steps(
     // With quick if toogle, technical printout for debugging
     // I'll keep it like that, if you're here that means you're digging into kernel launch
     
-    if(KernelLogsEnabled)
+    if(settings.KernelLogsEnabled)
     {
         printf("\n=== KERNEL LOGS ===\n");
         printf("\n--- SHARED MEMORY CONFIGURATION ---\n");
@@ -292,7 +292,7 @@ void run_simulation_steps(
                 case InteractionType::Gravity: {
                     cudaFuncSetAttribute(single_step_simulation_kernel<T, EulerIntegrator<T>, Gravity<T>>,
                                          cudaFuncAttributeMaxDynamicSharedMemorySize, max_shmem_bytes);
-                    Gravity<T> interaction(G, gravity_smoothing);
+                    Gravity<T> interaction(settings.G, settings.gravity_smoothing);
                     single_step_simulation_kernel<T, EulerIntegrator<T>, Gravity<T>>
                         <<<blocks_per_grid, threads_per_block_dim, requested_shmem_size, stream>>>
                         (d_particles, particles_per_system, box_min, box_max, dt, steps_to_run, interaction);
@@ -304,7 +304,7 @@ void run_simulation_steps(
                 case InteractionType::RepulsiveForce: {
                     cudaFuncSetAttribute(single_step_simulation_kernel<T, EulerIntegrator<T>, RepulsiveForce<T>>,
                                          cudaFuncAttributeMaxDynamicSharedMemorySize, max_shmem_bytes);
-                    RepulsiveForce<T> interaction(epsilon, sigma);
+                    RepulsiveForce<T> interaction(settings.epsilon, settings.sigma);
                     single_step_simulation_kernel<T, EulerIntegrator<T>, RepulsiveForce<T>>
                         <<<blocks_per_grid, threads_per_block_dim, requested_shmem_size, stream>>>
                         (d_particles, particles_per_system, box_min, box_max, dt, steps_to_run, interaction);
@@ -332,7 +332,7 @@ void run_simulation_steps(
                 case InteractionType::Gravity: {
                     cudaFuncSetAttribute(leapfrog_simulation_kernel<T, Gravity<T>>,
                                          cudaFuncAttributeMaxDynamicSharedMemorySize, max_shmem_bytes);
-                    Gravity<T> interaction(G, gravity_smoothing);
+                    Gravity<T> interaction(settings.G, settings.gravity_smoothing);
                     leapfrog_simulation_kernel<T, Gravity<T>>
                         <<<blocks_per_grid, threads_per_block_dim, requested_shmem_size, stream>>>
                         (d_particles, particles_per_system, box_min, box_max, dt, steps_to_run, interaction);
@@ -345,7 +345,7 @@ void run_simulation_steps(
                 case InteractionType::RepulsiveForce: {
                     cudaFuncSetAttribute(leapfrog_simulation_kernel<T, RepulsiveForce<T>>,
                                          cudaFuncAttributeMaxDynamicSharedMemorySize, max_shmem_bytes);
-                    RepulsiveForce<T> interaction(epsilon, sigma);
+                    RepulsiveForce<T> interaction(settings.epsilon, settings.sigma);
                     leapfrog_simulation_kernel<T, RepulsiveForce<T>>
                         <<<blocks_per_grid, threads_per_block_dim, requested_shmem_size, stream>>>
                         (d_particles, particles_per_system, box_min, box_max, dt, steps_to_run, interaction);
@@ -364,5 +364,5 @@ void run_simulation_steps(
 //                   Explicit Template Instantiations
 // =========================================================================
 // This is bad, I'm gonna have to change that when adding mixed precision
-template void run_initial_force_calculation<float>(Particle<float>*, int, int, InteractionType, cudaStream_t);
-template void run_simulation_steps<float>(Particle<float>*, int, int, int, IntegratorType, InteractionType, Vec2<float>, Vec2<float>, float, int, cudaStream_t);
+template void run_initial_force_calculation<float>(Particle<float>*, int, int, InteractionType, cudaStream_t, Settings);
+template void run_simulation_steps<float>(Particle<float>*, int, int, int, IntegratorType, InteractionType, Vec2<float>, Vec2<float>, float, int, cudaStream_t, Settings);

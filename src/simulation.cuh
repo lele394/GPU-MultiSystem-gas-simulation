@@ -7,6 +7,8 @@
 #include "particle_system.h"
 #include "simulation_defs.h"
 
+#include "settings.h"
+
 // A simple macro to check for CUDA errors from any file (Thanks Gemini for this one)
 #define CUDA_CHECK(err) { \
     cudaError_t err_code = err; \
@@ -28,7 +30,8 @@ void run_initial_force_calculation(
     int num_systems, 
     int particles_per_system, 
     InteractionType interaction_type, 
-    cudaStream_t stream);
+    cudaStream_t stream,
+    Settings settings);
 
 // Declaration for the main "Smart" Launcher
 template <typename T>
@@ -43,4 +46,5 @@ void run_simulation_steps(
     Vec2<T> box_max, 
     T dt, 
     int steps_to_run, 
-    cudaStream_t stream);
+    cudaStream_t stream,
+    Settings settings);

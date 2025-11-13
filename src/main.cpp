@@ -20,6 +20,9 @@ int main() {
     // Create data directory since I nuke it every compile/run
     std::filesystem::create_directory("dat");
 
+    // --- LOAD SETTINGS ---
+    Settings settings = GetSettings();
+
 
     // --- Simulation Parameters ---
     // MOVED TO SETTINGS.h
@@ -33,7 +36,7 @@ int main() {
     // - Simulation Control -
     // const int total_steps = 1000;
     // const int steps_between_recordings = 10;
-    const int num_recordings = total_steps / steps_between_recordings;
+    const int num_recordings = settings.total_steps / settings.steps_between_recordings;
 
 
     // MS tests
@@ -41,7 +44,7 @@ int main() {
     // const int particles_per_system = 2048;  // MAX 2048 for Leapfrog, due to __shared__ I believe. Kernel not started (?)    
                                             // MAX 1024 for Euler due to double buffering (Most likely since 50% of LF)
 
-    const int num_particles = num_systems * particles_per_system; // This is now a calculated value // New: Number of independent systems
+    const int num_particles = settings.num_systems * settings.particles_per_system; // This is now a calculated value // New: Number of independent systems
 
     const size_t total_particles_size = num_particles * sizeof(Particle<float>);
 
@@ -58,7 +61,7 @@ int main() {
     std::vector<Particle<float>> h_particles(num_particles);
 
     // - RNG and distributions - 
-    std::mt19937 rng(RNG_Seed);
+    std::mt19937 rng(settings.RNG_Seed);
 
     // Moved to settings.h
     // Pos
@@ -98,10 +101,11 @@ int main() {
     // Euler do be going nuts with "high" dt tho
     run_initial_force_calculation<float>(
         d_particles_sim,
-        num_systems,
-        particles_per_system,
-        interaction_type, 
-        compute_stream
+        settings.num_systems,
+        settings.particles_per_system,
+        settings.interaction_type, 
+        compute_stream,
+        settings
     );
 
 
@@ -142,7 +146,7 @@ int main() {
             // Wait for the PREVIOUS transfer to finish before writing
             CUDA_CHECK(cudaStreamSynchronize(compute_stream)); 
 
-            int previous_step = i * steps_between_recordings;
+            int previous_step = i * settings.steps_between_recordings;
             std::cout << "Processing data from step " << previous_step << std::endl;
             // std::cout << "  - Particle 0 position: (" 
             //           << h_pinned_buffers[previous_buffer_idx][0].position.x << ", " 
@@ -183,11 +187,11 @@ int main() {
         // That should be non blocking cuz NVIDIA STREAMS BABY
         run_simulation_steps<float>(
             d_particles_sim,
-            num_particles, num_systems, particles_per_system,
-            integrator_type,      
-            interaction_type,      
-            box_min, box_max, dt,
-            steps_between_recordings, compute_stream
+            num_particles, settings.num_systems, settings.particles_per_system,
+            settings.integrator_type,      
+            settings.interaction_type,      
+            settings.box_min, settings.box_max, settings.dt,
+            settings.steps_between_recordings, compute_stream, settings
         );
 
 
@@ -195,7 +199,7 @@ int main() {
         // Timing end kernel
         auto cpu_kernel_end_time = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double, std::milli> kernel_duration = cpu_kernel_end_time - cpu_kernel_start_time;
-        if(Timing_Profiling == true) std::cout << "  - Kernel execution time: " << kernel_duration.count() << " ms" << std::endl;
+        if(settings.Timing_Profiling == true) std::cout << "  - Kernel execution time: " << kernel_duration.count() << " ms" << std::endl;
 
 
             
@@ -219,13 +223,13 @@ int main() {
         // Timing transfer and kernel
         auto cpu_transfer_end_time = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double, std::milli> transfer_duration = cpu_transfer_end_time - cpu_transfer_start_time;
-        if(Timing_Profiling == true) std::cout << "  - Data transfer time: " << transfer_duration.count() << " ms" << std::endl;
+        if(settings.Timing_Profiling == true) std::cout << "  - Data transfer time: " << transfer_duration.count() << " ms" << std::endl;
 
         auto cpu_end_time = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double, std::milli> total_duration = cpu_end_time - cpu_start_time;
-        if(Timing_Profiling == true) std::cout << "  - Total iteration time: " << total_duration.count() << " ms\n ----------------------------------------" << std::endl;
+        if(settings.Timing_Profiling == true) std::cout << "  - Total iteration time: " << total_duration.count() << " ms\n ----------------------------------------" << std::endl;
 
-        if(Benchmarking_Mode == true) {
+        if(settings.Benchmarking_Mode == true) {
             // ==========================================================
             //         PERFORMANCE METRICS CALCULATION
             // ==========================================================
@@ -235,14 +239,14 @@ int main() {
             const double time_kernel_s = kernel_duration.count() / 1000.0;
 
             // --- Metric 1: Interactions per Second ---
-            const double interactions_per_step = static_cast<double>(num_systems) * 
-                                                 static_cast<double>(particles_per_system) * 
-                                                 (static_cast<double>(particles_per_system) - 1.0);
-            const double total_interactions = interactions_per_step * steps_between_recordings;
+            const double interactions_per_step = static_cast<double>(settings.num_systems) * 
+                                                 static_cast<double>(settings.particles_per_system) * 
+                                                 (static_cast<double>(settings.particles_per_system) - 1.0);
+            const double total_interactions = interactions_per_step * settings.steps_between_recordings;
             const double giga_interactions_per_second = (total_interactions / time_kernel_s) / 1e9;
 
             // --- Metric 2: Particle Updates per Second ---
-            const double total_updates = static_cast<double>(num_particles) * steps_between_recordings;
+            const double total_updates = static_cast<double>(num_particles) * settings.steps_between_recordings;
             const double mega_updates_per_second = (total_updates / time_kernel_s) / 1e6;
 
             // --- Print Results ---
@@ -263,10 +267,10 @@ int main() {
                 std::ofstream perf_file;
                 
                 // Check if the file exists BEFORE we open it.
-                bool file_exists = std::filesystem::exists(perf_filename);
+                bool file_exists = std::filesystem::exists(settings.perf_filename);
 
                 // Open the file in append mode. This will create it if it doesn't exist.
-                perf_file.open(perf_filename, std::ios_base::app); 
+                perf_file.open(settings.perf_filename, std::ios_base::app); 
                 
                 if (perf_file.is_open()) {
                     // If the file did not exist before we opened it, it's new. Write the header.
@@ -275,24 +279,24 @@ int main() {
                     }
                     perf_file.close(); // Close it immediately, we'll reopen in the loop
                 } else {
-                    std::cerr << "Warning: Could not open " << perf_filename << " for initial setup.\n";
+                    std::cerr << "Warning: Could not open " << settings.perf_filename << " for initial setup.\n";
                 }
             }
 
             // On EVERY iteration, open, append one line, and close.
             // This is less efficient but safer if the program crashes mid-run.
-            std::ofstream perf_file(perf_filename, std::ios_base::app);
+            std::ofstream perf_file(settings.perf_filename, std::ios_base::app);
             if (perf_file.is_open()) {
                 // A unique ID for this specific run, based on the current time
                 static const auto run_id = std::chrono::system_clock::now().time_since_epoch().count();
 
                 perf_file << run_id << ","
                           << i << ","
-                          << (integrator_type == IntegratorType::Leapfrog ? "Leapfrog" : "Euler") << ","
-                          << (interaction_type == InteractionType::Gravity ? "Gravity" : "RepulsiveForce") << "," // Add other interactions
-                          << num_systems << ","
-                          << particles_per_system << ","
-                          << steps_between_recordings << ","
+                          << (settings.integrator_type == IntegratorType::Leapfrog ? "Leapfrog" : "Euler") << ","
+                          << (settings.interaction_type == InteractionType::Gravity ? "Gravity" : "RepulsiveForce") << "," // Add other interactions
+                          << settings.num_systems << ","
+                          << settings.particles_per_system << ","
+                          << settings.steps_between_recordings << ","
                           << kernel_duration.count() << ","
                           << giga_interactions_per_second << ","
                           << mega_updates_per_second << "\n";
@@ -308,7 +312,7 @@ int main() {
     // --- FINAL SYNCHRONIZATION AND PROCESSING ---
     // Same as above, but for the last batch
     CUDA_CHECK(cudaStreamSynchronize(compute_stream));
-    int final_step = num_recordings * steps_between_recordings;
+    int final_step = num_recordings * settings.steps_between_recordings;
     std::cout << "\nProcessing data from final step " << final_step << std::endl;
     // std::cout << "  - Particle 0 position: (" 
     //           << h_pinned_buffers[(num_recordings - 1) % 2][0].position.x << ", " 

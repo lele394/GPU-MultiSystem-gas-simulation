@@ -14,14 +14,29 @@
 
 #include "settings.h"
 
-int main() {
+int main(int argc, char* argv[]) {
+
+
+    std::cout <<"     ░███     ░███   ░██████             ░██████   ░██                  " << std::endl;
+    std::cout <<"     ░████   ░████  ░██   ░██           ░██   ░██                       " << std::endl;
+    std::cout <<"     ░██░██ ░██░██ ░██                 ░██         ░██░█████████████    " << std::endl;
+    std::cout <<"     ░██ ░████ ░██  ░████████  ░██████  ░████████  ░██░██   ░██   ░██   " << std::endl;
+    std::cout <<"     ░██  ░██  ░██         ░██                 ░██ ░██░██   ░██   ░██   " << std::endl;
+    std::cout <<"     ░██       ░██  ░██   ░██           ░██   ░██  ░██░██   ░██   ░██   " << std::endl;
+    std::cout <<"     ░██       ░██   ░██████             ░██████   ░██░██   ░██   ░██   " << std::endl;
+    std::cout <<"  ======================================================================" << std::endl;
+    std::cout << GREEN + "                   Léo BECHET, Uppsala University, 2025                 " + RESET << std::endl;
+    std::cout <<"                         License : CC BY-NC-SA                          " << std::endl;
+    std::cout <<"  ======================================================================" << std::endl;
+
+    // --- LOAD SETTINGS ---
+    Settings settings = GetSettings(argc, argv);
+
 
     // ---- LOGGING STUFF ----
     // Create data directory since I nuke it every compile/run
     std::filesystem::create_directory("dat");
 
-    // --- LOAD SETTINGS ---
-    Settings settings = GetSettings();
 
 
     // --- Simulation Parameters ---

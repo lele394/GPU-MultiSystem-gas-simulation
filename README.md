@@ -11,6 +11,42 @@ Pretty cool N-Body simulation that can do a bunch of stuff.
 
 Went with a simple integrator instead of doing object oriented with `p1.interact(p2)`
 
+---
+
+# Env vars
+
+```sh
+#!/usr/bin/env bash
+# ================================
+# Simulation Environment Settings
+# ================================
+
+# --- Simulation settings ---
+export SIM_NUM_SYSTEMS=1
+export SIM_PARTICLES_PER_SYSTEM=100
+export SIM_TOTAL_STEPS=10000
+export SIM_STEPS_BETWEEN_RECORDINGS=100
+export SIM_DT=0.001
+
+# --- Enum settings ---
+export SIM_INTERACTION="gravity" # Gravity or RepulsiveForce or IdealGas
+# export SIM_INTEGRATOR="verlet"   # Uncomment if get_env_integrator() is implemented
+
+# --- Interaction parameters ---
+export SIM_EPSILON=1.0
+export SIM_SIGMA=1.0
+export SIM_GRAVITY_G=1.0
+export SIM_GRAVITY_SMOOTHING=0.01
+
+# --- RNG settings ---
+export SIM_RNG_SEED=42
+```
+
+
+---
+
+
+
 
 # Mixed Precision analysis
 

@@ -32,14 +32,14 @@ struct Settings
     bool Timing_Profiling = true;
     bool Benchmarking_Mode = true;
 
-    std::string perf_filename = "../perfs.csv";
+    std::string perf_filename = "../perfs_sweep2.csv";
 
     // Simulation settings
     int num_systems = 24;
-    int particles_per_system = 2048;  
-    int total_steps = 100;
-    int steps_between_recordings = 10;
-    float dt = 1.0e-3f;
+    int particles_per_system = 4096;  
+    int total_steps = 10000;
+    int steps_between_recordings = 100;
+    float dt = 1.0e-4f;
     
     InteractionType interaction_type = InteractionType::RepulsiveForce;
     IntegratorType integrator_type = IntegratorType::Leapfrog;

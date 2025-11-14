@@ -111,7 +111,7 @@ __global__ void single_step_simulation_kernel(
             write_buffer[p_idx] = p;
         }
         __syncthreads();
-        Particle<T>* temp = read_buffer; read_buffer = write_buffer; write_buffer = temp;
+        Particle<T>* temp = read_buffer; read_buffer = write_buffer; write_buffer = temp; //ping pong
     }
 
     for (int p_idx = thread_id; p_idx < particles_per_system; p_idx += num_threads) {

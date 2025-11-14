@@ -228,8 +228,10 @@ int main(int argc, char* argv[]) {
         // Can apparently hook into cuda events and avoid that. Would it corrupt data tho? 
         // I dunno. Needs testing.
         // For now, this works ¯\_(ツ)_/¯ (I copy pasted that shrug)
+        std::cout << "  - Initiated data transfer for step " << (i + 1) * settings.steps_between_recordings << std::endl;
         CUDA_CHECK(cudaStreamSynchronize(compute_stream)); // Finish D-D copy
         CUDA_CHECK(cudaStreamSynchronize(transfer_stream)); // Ensure previous D-H is done before starting a new one, don't make data go badonkers
+        std::cout << "  - Previous data transfer completed." << std::endl;
 
 
         // Start async transfer into the CURRENT buffer (cf ping pong)
@@ -326,9 +328,10 @@ int main(int argc, char* argv[]) {
 
     // --- FINAL SYNCHRONIZATION AND PROCESSING ---
     // Same as above, but for the last batch
+    // Note I don't process the last batch yet, need to add it back but my turn to a function
     CUDA_CHECK(cudaStreamSynchronize(compute_stream));
     int final_step = num_recordings * settings.steps_between_recordings;
-    std::cout << "\nProcessing data from final step " << final_step << std::endl;
+    // std::cout << "\nProcessing data from final step " << final_step << std::endl;
     // std::cout << "  - Particle 0 position: (" 
     //           << h_pinned_buffers[(num_recordings - 1) % 2][0].position.x << ", " 
     //           << h_pinned_buffers[(num_recordings - 1) % 2][0].position.y << ")" << std::endl;

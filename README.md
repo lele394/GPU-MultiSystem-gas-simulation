@@ -1,6 +1,10 @@
 Pretty cool N-Body simulation that can do a bunch of stuff.
 
 
+# You can look around, the code is heavily commented. However this idea is bad, like really bad. This effectively turns a perfectly fine GPU into a glorified CPU.
+
+
+
 > There isn't any kind of forces computation optimization, ie we don't use the interactions symmetry 
 > > Might be usefull since I run on a single SM, CF fortran N-body to check if that damn race condition still mess around
 
@@ -22,8 +26,8 @@ Went with a simple integrator instead of doing object oriented with `p1.interact
 # ================================
 
 # --- Simulation settings ---
-export SIM_NUM_SYSTEMS=1
-export SIM_PARTICLES_PER_SYSTEM=100
+export SIM_NUM_SYSTEMS=24
+export SIM_PARTICLES_PER_SYSTEM=2048
 export SIM_TOTAL_STEPS=10000
 export SIM_STEPS_BETWEEN_RECORDINGS=100
 export SIM_DT=0.001
